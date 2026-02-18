@@ -2,6 +2,7 @@
 Source: https://github.com/BoboTiG/python-mss.
 """
 
+import platform
 from collections.abc import Callable
 
 import pytest
@@ -32,7 +33,7 @@ def test_primary_monitor(mss_impl: Callable[..., MSSBase]) -> None:
             assert primary == monitors[1]
 
 
-@pytest.mark.skipif("mss.windows" not in dir(), reason="Windows only")
+@pytest.mark.skipif(platform.system() != "Windows", reason="Windows only")
 def test_primary_monitor_coordinates_windows() -> None:
     """Test that on Windows, the primary monitor has coordinates at (0, 0)."""
     import mss  # noqa: PLC0415
