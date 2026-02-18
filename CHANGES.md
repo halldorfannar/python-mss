@@ -6,7 +6,7 @@
 - Added `primary_monitor` property to return the primary monitor (or first monitor as fallback).
 
 ### models.py
-- Changed `Monitor` type from `dict[str, int]` to `dict[str, Any]` to support new `is_primary` (bool) and `name` (str) fields.
+- Changed `Monitor` type from `dict[str, int]` to `dict[str, Any]` to support new `is_primary` (bool, optional), `name` (str, optional), and `unique_id` (str, optional) fields.
 - Added TODO comment for future Monitor class implementation (#470).
 
 ### windows.py
@@ -15,7 +15,7 @@
 - Added constants: `CCHDEVICENAME`, `MONITORINFOF_PRIMARY`, `EDD_GET_DEVICE_INTERFACE_NAME`.
 - Added `GetMonitorInfoW` to `CFUNCTIONS` for querying monitor properties.
 - Added `EnumDisplayDevicesW` to `CFUNCTIONS` for querying device details.
-- Modified `_monitors_impl()` callback to extract primary monitor flag and device names using Win32 APIs.
+- Modified `_monitors_impl()` callback to extract primary monitor flag, device names, and device interface name (unique_id) using Win32 APIs; `unique_id` uses `EDD_GET_DEVICE_INTERFACE_NAME` when available.
 
 ## 10.1.1 (2025-xx-xx)
 

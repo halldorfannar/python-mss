@@ -214,6 +214,9 @@ class MSSBase(metaclass=ABCMeta):
         - ``top``: the y-coordinate of the upper-left corner
         - ``width``: the width
         - ``height``: the height
+        - ``is_primary``: (optional) true if this is the primary monitor
+        - ``name``: (optional) human-readable device name
+        - ``unique_id``: (optional) platform-specific stable identifier for the monitor
         """
         with self._lock:
             if not self._monitors:

@@ -299,6 +299,7 @@ class MSS(MSSBase):
             device_string = device_name
 
             # EnumDisplayDevicesW can get more detailed info about the device
+            unique_id: str | None = None
             if user32.EnumDisplayDevicesW(
                 ctypes.cast(ctypes.addressof(info.szDevice), POINTER(WORD)),
                 0,
@@ -308,16 +309,26 @@ class MSS(MSSBase):
                 # DeviceString contains the friendly name like "Generic PnP Monitor" or manufacturer name
                 device_string = ctypes.wstring_at(ctypes.addressof(display_device.DeviceString))
 
-            self._monitors.append(
-                {
-                    "left": left,
-                    "top": top,
-                    "width": int_(rct.right) - left,
-                    "height": int_(rct.bottom) - top,
-                    "is_primary": is_primary,
-                    "name": device_string,
-                },
-            )
+            # Get device interface name (stable per-physical-monitor ID) when supported
+            if user32.EnumDisplayDevicesW(
+                ctypes.cast(ctypes.addressof(info.szDevice), POINTER(WORD)),
+                0,
+                ctypes.byref(display_device),
+                EDD_GET_DEVICE_INTERFACE_NAME,
+            ):
+                unique_id = ctypes.wstring_at(ctypes.addressof(display_device.DeviceID))
+
+            mon_dict: dict[str, Any] = {
+                "left": left,
+                "top": top,
+                "width": int_(rct.right) - left,
+                "height": int_(rct.bottom) - top,
+                "is_primary": is_primary,
+                "name": device_string,
+            }
+            if unique_id is not None:
+                mon_dict["unique_id"] = unique_id
+            self._monitors.append(mon_dict)
             return True
 
         user32.EnumDisplayMonitors(0, None, callback, 0)
