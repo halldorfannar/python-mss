@@ -290,26 +290,21 @@ class MSS(MSSBase):
             top = int_(rct.top)
             # Check the dwFlags field for MONITORINFOF_PRIMARY
             is_primary = bool(info.dwFlags & MONITORINFOF_PRIMARY)
-            # Extract device name (null-terminated wide string)
-            device_name = ctypes.wstring_at(ctypes.addressof(info.szDevice))
-
-            # Get friendly device string (manufacturer/model info)
             display_device = DISPLAY_DEVICEW()
             display_device.cb = ctypes.sizeof(DISPLAY_DEVICEW)
-            device_string = device_name
 
-            # EnumDisplayDevicesW can get more detailed info about the device
-            unique_id: str | None = None
+            # EnumDisplayDevicesW can get friendly name (e.g. "Generic PnP Monitor")
+            device_string: str | None = None
             if user32.EnumDisplayDevicesW(
                 ctypes.cast(ctypes.addressof(info.szDevice), POINTER(WORD)),
                 0,
                 ctypes.byref(display_device),
                 0,
             ):
-                # DeviceString contains the friendly name like "Generic PnP Monitor" or manufacturer name
                 device_string = ctypes.wstring_at(ctypes.addressof(display_device.DeviceString))
 
             # Get device interface name (stable per-physical-monitor ID) when supported
+            unique_id: str | None = None
             if user32.EnumDisplayDevicesW(
                 ctypes.cast(ctypes.addressof(info.szDevice), POINTER(WORD)),
                 0,
@@ -324,8 +319,9 @@ class MSS(MSSBase):
                 "width": int_(rct.right) - left,
                 "height": int_(rct.bottom) - top,
                 "is_primary": is_primary,
-                "name": device_string,
             }
+            if device_string is not None:
+                mon_dict["name"] = device_string
             if unique_id is not None:
                 mon_dict["unique_id"] = unique_id
             self._monitors.append(mon_dict)
