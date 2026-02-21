@@ -217,6 +217,7 @@ class MSSBase(metaclass=ABCMeta):
         - ``is_primary``: (optional) true if this is the primary monitor
         - ``name``: (optional) human-readable device name
         - ``unique_id``: (optional) platform-specific stable identifier for the monitor
+        - ``output``: (optional, Linux only) monitor output name, compatible with xrandr
         """
         with self._lock:
             if not self._monitors:
