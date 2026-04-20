@@ -5,12 +5,24 @@
 ### base.py
 - (This affected almost every file in some respect, but base.py was the most affected.)  Introduced a new API, mss.MSS.  This class can be used instead of the previous various MSSBase subclasses, so that the user can work with a consistent class regardless of implementation details.  The methods implemented by MSSBase subclasses were renamed, and moved to MSSImplementation subclasses.  The mss.MSS class now holds an MSSImplementation instance as an instance variable. (#486, #494)
 - Added `primary_monitor` property to return the primary monitor (or first monitor as fallback).
+- `_choose_impl()` now delegates to `mss.windows.choose_impl()` on Windows, mirroring the recent Linux changes.
 
 ### models.py
 - Changed `Monitor` type from `dict[str, int]` to `dict[str, Any]` to support new `is_primary` (bool, optional), `name` (str, optional), and `unique_id` (str, optional) fields.
 - Added TODO comment for future Monitor class implementation (#470).
 
-### windows.py
+### windows/ (package; replaces the previous `windows.py` module)
+- Restructured `mss.windows` into a package to prepare for future backends (DXGI, etc.). The GDI-based implementation was moved out of `windows.py` into a new submodule; the top-level `mss.windows` namespace now exposes a backend dispatcher.
+
+### windows/\_\_init__.py (new file)
+- Added `choose_impl(backend="default", **kwargs)` dispatcher paralleling `mss.linux.choose_impl()`.
+- Added `BACKENDS = ["default"]` list for CLI/backend enumeration.
+- Kept the deprecated `mss.windows.MSS` compatibility constructor.
+- Re-exports `MSSImplWindows` from `mss.windows.gdi` so existing code that references `mss.windows.MSSImplWindows` continues to work.
+
+### windows/gdi.py (new file; contents moved from `windows.py`)
+- Hosts the GDI-based `MSSImplWindows` implementation and all supporting ctypes plumbing (`BITMAPINFO`, `BITMAPINFOHEADER`, `MONITORINFOEXW`, `DISPLAY_DEVICEW`, `MONITORNUMPROC`, `CFUNCTIONS`, `_errcheck`, and related constants).
+- `MSSImplWindows.__init__` no longer accepts a `backend` keyword; backend validation is now performed by `choose_impl()` (matches how the Linux backend classes are structured).
 - Added `MONITORINFOEXW` structure for extended monitor information.
 - Added `DISPLAY_DEVICEW` structure for device information.
 - Added constants: `CCHDEVICENAME`, `MONITORINFOF_PRIMARY`, `EDD_GET_DEVICE_INTERFACE_NAME`.

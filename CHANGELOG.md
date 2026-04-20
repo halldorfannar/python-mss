@@ -13,6 +13,7 @@ See Git commit messages for full history.
 - Linux: add primary monitor detection, monitor device name, unique device interface name, and output name using XRandR (#153)
 - Windows: switch from `GetDIBits` to more memory efficient `CreateDIBSection` for `MSS.grab` implementation (#449)
 - Windows: fix gdi32.GetDIBits() failed after a couple of minutes of recording (#268)
+- Windows: restructure `mss.windows` into a package with a `choose_impl()` dispatcher (mirroring `mss.linux`) to prepare for future backends; the existing GDI implementation is now in `mss.windows.gdi`. `mss.windows.MSS`, `mss.windows.MSSImplWindows`, and `mss.windows.BACKENDS` remain importable for backward compatibility.
 - Linux: check the server for Xrandr support version (#417)
 - Linux: improve typing and error messages for X libraries (#418)
 - Linux: introduce an XCB-powered backend stack with a factory in ``mss.linux`` while keeping the Xlib code as a fallback (#425)
