@@ -100,6 +100,43 @@ def test_thread_safety() -> None:
     thread2.join()
 
 
+def test_monitors_does_not_call_getwindowdc() -> None:
+    """Regression test for issue #509.
+
+    ``sct.monitors`` only needs ``EnumDisplayMonitors`` / ``GetMonitorInfoW``;
+    it must not require a desktop DC.  ``GetWindowDC(0)`` can fail with
+    ``WinError 5: Access is denied`` (locked screen, UAC, RDP, GDI pressure),
+    so constructing an ``MSS`` purely to read monitor geometry must not touch
+    it.  We wrap ``GetWindowDC`` so any call would crash the test.
+    """
+    with mss.MSS() as sct:
+        impl = sct._impl
+        assert isinstance(impl, MSSImplGdi)
+
+        original_getwindowdc = impl.user32.GetWindowDC
+
+        def guard(_hwnd: int) -> int:
+            msg = "GetWindowDC must not be called while only reading sct.monitors"
+            raise AssertionError(msg)
+
+        impl.user32.GetWindowDC = guard
+        try:
+            # The DCs were not created eagerly in __init__.
+            assert impl._srcdc is None
+            assert impl._memdc is None
+
+            # Reading monitors does not require a desktop DC.
+            monitors = sct.monitors
+            assert len(monitors) >= 1
+            assert "width" in monitors[0]
+
+            # Still no DCs allocated after the monitor query.
+            assert impl._srcdc is None
+            assert impl._memdc is None
+        finally:
+            impl.user32.GetWindowDC = original_getwindowdc
+
+
 def run_child_thread_bbox(loops: int, bbox: tuple[int, int, int, int]) -> None:
     with mss.MSS() as sct:  # One sct for all loops
         for _ in range(loops):

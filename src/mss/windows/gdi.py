@@ -205,8 +205,11 @@ class MSSImplGdi(MSSImplementation):
         self._dib: HBITMAP | None = None
         self._dib_bits: LPVOID = LPVOID()  # Pointer to DIB pixel data
         self._dib_array: ctypes.Array[ctypes.c_char] | None = None  # Cached array view of DIB memory
-        self._srcdc = self.user32.GetWindowDC(0)
-        self._memdc = self.gdi32.CreateCompatibleDC(self._srcdc)
+        # Defer desktop and memory DC creation until the first grab(). GetWindowDC(0) can fail
+        # (locked screen, UAC prompt, RDP disconnect, GDI handle pressure) and must not
+        # prevent callers that only need monitor geometry (sct.monitors) from working.
+        self._srcdc: HDC | None = None
+        self._memdc: HDC | None = None
 
         bmi = BITMAPINFO()
         bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
@@ -234,6 +237,18 @@ class MSSImplGdi(MSSImplementation):
         if self._srcdc:
             self.user32.ReleaseDC(0, self._srcdc)
             self._srcdc = None
+
+    def _ensure_dcs(self) -> None:
+        """Lazily allocate the desktop and memory device contexts.
+
+        Called on the first ``grab()`` so that ``GetWindowDC(0)`` failures
+        (locked screen, UAC, RDP, GDI pressure) do not prevent callers
+        that only need ``monitors()`` from constructing an ``MSS``.
+        """
+        if self._srcdc is None:
+            self._srcdc = self.user32.GetWindowDC(0)
+        if self._memdc is None:
+            self._memdc = self.gdi32.CreateCompatibleDC(self._srcdc)
 
     def _set_cfunctions(self) -> None:
         """Set all ctypes functions and attach them to attributes."""
@@ -346,6 +361,7 @@ class MSSImplGdi(MSSImplementation):
         https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapinfoheader
         https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createdibsection
         """
+        self._ensure_dcs()
         srcdc, memdc = self._srcdc, self._memdc
         gdi = self.gdi32
         width, height = monitor["width"], monitor["height"]
