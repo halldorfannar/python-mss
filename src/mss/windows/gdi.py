@@ -208,6 +208,7 @@ class MSSImplGdi(MSSImplementation):
         # Defer desktop and memory DC creation until the first grab(). GetWindowDC(0) can fail
         # (locked screen, UAC prompt, RDP disconnect, GDI handle pressure) and must not
         # prevent callers that only need monitor geometry (sct.monitors) from working.
+        # See issue #509.
         self._srcdc: HDC | None = None
         self._memdc: HDC | None = None
 
@@ -247,7 +248,6 @@ class MSSImplGdi(MSSImplementation):
         """
         if self._srcdc is None:
             self._srcdc = self.user32.GetWindowDC(0)
-        if self._memdc is None:
             self._memdc = self.gdi32.CreateCompatibleDC(self._srcdc)
 
     def _set_cfunctions(self) -> None:
