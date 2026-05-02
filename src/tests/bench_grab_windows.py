@@ -163,36 +163,40 @@ def benchmark_raw_bitblt(iterations: int = ITERATIONS) -> None:
     srccopy = 0x00CC0020
     captureblt = 0x40000000
 
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+
     with mss.MSS() as sct:
         monitor = sct.monitors[1]
         width, height = monitor["width"], monitor["height"]
         left, top = monitor["left"], monitor["top"]
 
-        # Force region setup
-        sct.grab(monitor)
-
-        assert isinstance(sct._impl, mss.windows.gdi.MSSImplGdi)
-        srcdc = sct._impl._srcdc
-        memdc = sct._impl._memdc
+        # Acquire DCs directly for raw benchmarking (the impl no longer
+        # holds them as instance state — they are per-grab now).
+        srcdc = user32.GetWindowDC(0)
+        memdc = gdi32.CreateCompatibleDC(srcdc)
 
         print(f"Raw BitBlt benchmark ({width}x{height})")
         print("=" * 50)
 
-        # Test with CAPTUREBLT
-        start = perf_counter()
-        for _ in range(iterations):
-            bitblt(memdc, 0, 0, width, height, srcdc, left, top, srccopy | captureblt)
-            gdiflush()
-        elapsed = perf_counter() - start
-        _print_result("With CAPTUREBLT   ", iterations, elapsed)
+        try:
+            # Test with CAPTUREBLT
+            start = perf_counter()
+            for _ in range(ITERATIONS):
+                bitblt(memdc, 0, 0, width, height, srcdc, left, top, srccopy | captureblt)
+                gdiflush()
+            elapsed = perf_counter() - start
+            print(f"With CAPTUREBLT:    {elapsed / ITERATIONS * 1000:.2f}ms ({ITERATIONS / elapsed:.1f} FPS)")
 
-        # Test without CAPTUREBLT
-        start = perf_counter()
-        for _ in range(iterations):
-            bitblt(memdc, 0, 0, width, height, srcdc, left, top, srccopy)
-            gdiflush()
-        elapsed = perf_counter() - start
-        _print_result("Without CAPTUREBLT", iterations, elapsed)
+            # Test without CAPTUREBLT
+            start = perf_counter()
+            for _ in range(ITERATIONS):
+                bitblt(memdc, 0, 0, width, height, srcdc, left, top, srccopy)
+                gdiflush()
+            elapsed = perf_counter() - start
+            print(f"Without CAPTUREBLT: {elapsed / ITERATIONS * 1000:.2f}ms ({ITERATIONS / elapsed:.1f} FPS)")
+        finally:
+            gdi32.DeleteDC(memdc)
+            user32.ReleaseDC(0, srcdc)
 
 
 def benchmark_raw_dc_allocation(
