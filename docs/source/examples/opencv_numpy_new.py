@@ -1,0 +1,39 @@
+"""This is part of the MSS Python's module.
+Source: https://github.com/BoboTiG/python-mss.
+
+Adapted for the proposed source-bound capture API (not yet implemented).
+
+OpenCV/Numpy example.
+"""
+
+import time
+
+import cv2
+
+import mss
+
+with mss.MSS() as sct:
+    # Part of the screen to capture
+    monitor = mss.Region(top=40, left=0, width=800, height=640)
+
+    with sct.create_capture(sct.desktop) as capture:
+        while "Screen capturing":
+            last_time = time.time()
+
+            # Get raw pixels from the screen, save it to a NumPy array.
+            # Note that OpenCV expects colors in BGR order.
+            img = capture.grab(region=monitor).to_numpy(channels="BGR")
+
+            # Display the picture
+            cv2.imshow("OpenCV/NumPy normal", img)
+
+            # Display the picture in grayscale
+            # cv2.imshow('OpenCV/Numpy grayscale',
+            #            cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
+
+            print(f"fps: {1 / (time.time() - last_time)}")
+
+            # Press "q" to quit
+            if cv2.waitKey(25) & 0xFF == ord("q"):
+                cv2.destroyAllWindows()
+                break

@@ -14,6 +14,9 @@ Decisions below reflect discussion on #544 through 2026-08-01. Sections marked *
 `MSS` is a platform session. It enumerates sources and creates source-bound `Capture` objects. Captures return
 `ScreenShot` objects (see the Results section below).
 
+At most one source-bound `MSS` session may be active per process, across all threads, Python interpreters, and backends.
+The session coordinates resources shared by its captures.
+
 ```python
 with MSS() as session:
     monitor = session.list_monitors()[0]
@@ -36,6 +39,25 @@ class Region:
     width: int
     height: int
 ```
+
+## Session configuration
+
+`MSS` accepts the keyword-only option `xdisplay: str | None = None` to select an X11 server connection:
+
+```python
+with MSS(xdisplay=":0.0") as session:
+    monitors = session.list_monitors()
+```
+
+When `xdisplay` is `None`, the X11 connection uses the `DISPLAY` environment variable. An explicit value overrides
+that environment variable for this session without modifying the environment. The selected connection is shared by
+X11 source enumeration and captures; it must be resolved before enumerating monitors or windows, rather than when
+`create_capture()` selects a capture backend. Connection initialization remains lazy under the session ownership rules.
+
+`xdisplay` applies only to X11, including XWayland connections. It does not configure native Wayland portal capture,
+Windows, or macOS. It selects the X11 server, not the capture backend; X11 capture backends such as `xgetimage` and
+`xshmgetimage` use that session connection. The existing `display=` option remains available for legacy compatibility;
+the source-bound API uses the explicit name `xdisplay`.
 
 ## Public types
 
@@ -301,14 +323,20 @@ capture.grab(region=Region(left=10, top=20, width=640, height=480))
 `None` captures the full source extent (subject to `area` for windows). Region may differ across `grab` calls.
 Coordinates and clipping use `capture.pixel_space`.
 
+Regions are offsets from the source origin; `(0, 0)` means no offset. A `Desktop` source's origin is the
+session-global desktop origin `(0, 0)`, preserving legacy `MSS.grab()` coordinates. A `Monitor` source's origin is
+its top-left. A window capture's origin is the top-left of its chosen `CLIENT` or `FULL` extent. These origins are
+coordinate conventions, not an additional public API.
+
+The desktop's bounds may extend left of or above its origin. For example, a desktop spanning global x coordinates
+from -1920 to 1920 retains origin `(0, 0)`; a desktop region with `left=-1920` addresses its leftmost edge.
+`region=None` captures the full source extent, including any portion at negative offsets.
+
 Region fields are integers. Negative `left` and `top` values are valid. Width and height must be positive; zero or a
 negative value raises `ValueError`. The effective rectangle is recomputed for each acquisition against the
-capture-local extent:
-
-```python
-source_extent = Region(left=0, top=0, width=source_width, height=source_height)
-effective = requested_region.intersection(source_extent)
-```
+source extent expressed relative to that origin. For a desktop, this extent retains its session-global bounds,
+including any negative coordinates; for a monitor or window, it starts at `(0, 0)`. Clip the requested region
+against that extent, then translate the result by the source origin to obtain session-global image bounds.
 
 `image.bounds` describes the effective clipped rectangle in `capture.pixel_space`. A region with an empty intersection
 raises `ValueError`. If the source itself currently has an empty extent, frame acquisition is temporarily unavailable
@@ -350,8 +378,9 @@ image.size    # Width and height of the returned buffer in physical pixels
 contains one physical buffer, never logical and physical copies.
 
 `source.bounds` and `capture.source_bounds` use session-global desktop coordinates in `capture.pixel_space`. A region
-passed to `grab()` is capture-local. `image.bounds` is the effective clipped region translated by the origin of
-`capture.source_bounds`; `image.pos` is the origin of that translated rectangle. For `WindowArea.CLIENT`,
+passed to `grab()` is an offset from the source origin defined above. `image.bounds` is the effective clipped region
+translated by that source origin, which is `(0, 0)` for a desktop and the top-left of `capture.source_bounds` for a
+monitor or window. `image.pos` is the top-left of that translated rectangle. For `WindowArea.CLIENT`,
 `capture.source_bounds` describes the global client/content rectangle; for `WindowArea.FULL`, it describes the global
 native frame rectangle.
 
@@ -418,6 +447,33 @@ separate change. Adding `frames()` later does not require changing source-bound 
 
 ## Lifetime and recovery
 
+### Session ownership
+
+At most one `MSS` session per process may be committed to the source-bound API at a time. This rule applies to every
+backend on every platform, including sessions in different Python subinterpreters within the same process. Separate
+processes have independent session reservations. The legacy path retains its existing support for multiple `MSS` objects.
+
+Construction leaves a session uncommitted. Its first source-bound operation atomically reserves the process's session
+ownership before initializing shared platform resources or performing the operation. If another session owns the
+reservation, the operation immediately raises `SessionAlreadyOpenError`, without initializing a provider or presenting a
+picker. The rejected session remains uncommitted and may retry after the owning session closes. Failure while establishing
+the source-bound session releases its reservation after any partially initialized resources have been cleaned up.
+
+An established session retains ownership until it closes, even when it has no captures. Closing the session closes its
+live captures and releases shared capture resources before releasing the reservation. Session closure is idempotent.
+Closed session objects, source snapshots, and returned images may remain alive without preventing a new session from
+opening. Picker cancellation, capture closure, provider recovery, and backend selection do not release session ownership.
+
+Captures obtain resources that need to be shared or coordinated through their owning session. For example, DXGI captures
+targeting the same output share the session's native duplication resources while retaining their individual capture
+configuration and lifetime.
+
+Enforcement requires process-wide native or OS synchronization accessible from every interpreter. Python module state,
+class-level singletons, and `threading.Lock` objects alone are insufficient because each subinterpreter has its own Python
+state. The synchronization mechanism is private and must enforce the same ownership contract for all backends.
+
+### Capture lifetime and recovery
+
 `Capture` is an idempotent context manager: `__exit__` closes; `close()` may be called again with no effect.
 
 ```python
@@ -462,6 +518,7 @@ are recoverable provider conditions when the source still exists; they are not t
 MSSError
 ├── ScreenShotError                       legacy API
 ├── SessionClosedError
+├── SessionAlreadyOpenError               another source-bound session is active in the process
 ├── SessionModeError                      legacy/source-bound API paths mixed
 ├── SourceEnumerationUnsupportedError
 ├── WindowSelectionError
@@ -486,8 +543,9 @@ The deprecated `MSS.grab()`, `MSS.monitors`, `save()`, and `shot()` retain their
 immutable `Monitor` objects, including the virtual-desktop entry at index zero; temporary string-key access provides the
 migration bridge. Legacy `MSS.grab()` accepts those objects as well as current user-created dictionaries and PIL-style
 tuples. The legacy and new paths must not be mixed on one `MSS` session. A session is initially uncommitted; its first
-legacy or new operation commits it to that path for its lifetime. Using an API from the other path afterward raises
-`SessionModeError`.
+legacy operation commits it to the legacy path, while its first new operation reserves process-wide session ownership
+and commits it to the source-bound path as described above. Using an API from the other path afterward raises
+`SessionModeError`. Legacy sessions do not acquire the source-bound session reservation.
 
 The legacy backend is initialized lazily by the first legacy operation. Constructor-level `backend=` and
 `with_cursor=` configure only that path; they do not initialize it. New source enumeration and capture creation belong
@@ -503,9 +561,10 @@ otherwise refuses the requested configuration. An already-established compatible
 ### Settled for this revision
 
 - Session + source-bound `Capture`; region on `grab`, not `create_capture`
+- One active source-bound session per process across all interpreters and backends; shared capture resources belong to it
 - Sources carry private session provenance; manually constructed geometry is not a capture source
 - Pixel space is platform/process determined and inspectable, not caller-selectable
-- Source and image bounds are session-global; requested regions are capture-local
+- Source and image bounds are session-global; requested regions are offsets from the source origin (global zero for Desktop)
 - `image.size` and buffer shapes are always physical; `image.bounds` maps them to the capture's coordinate space
 - Synchronous `create_capture_from_picker`; best-effort `target_hint`, no hard target-category filter or public
   intermediate picked-source object
@@ -550,6 +609,12 @@ behavior.
 ### Task 2: Platform session and source enumeration
 
 - Split shared platform/session resources from legacy capture initialization.
+- Add the keyword-only `xdisplay` session option for X11 connection selection before source enumeration, defaulting
+  to `DISPLAY` without modifying the environment; preserve legacy `display=` compatibility.
+- Enforce one source-bound session per process using native or OS synchronization shared across interpreters, with
+  `SessionAlreadyOpenError` on contention and reservation release after initialization cleanup or session closure.
+- Test ownership across threads and subinterpreters, initialization failure, closure, sequential sessions, and independent
+  processes; verify that sessions retain ownership without captures and that legacy sessions remain compatible.
 - Add `Desktop`, session-bound `Monitor`, and `Window` source provenance.
 - Add `pixel_space`, `desktop`, `list_monitors()`, and `list_windows()` with immutable snapshot semantics.
 - Define platform enumeration support and `SourceEnumerationUnsupportedError` behavior.
@@ -568,8 +633,10 @@ behavior.
 
 - Add `Region`, `WindowArea`, `Capture`, `create_capture()`, and the v1 exception hierarchy.
 - Implement context-manager lifetime, idempotent close, source ownership checks, and stable result-buffer lifetime.
-- Implement global/source-local coordinate rules, physical result sizes with `image.bounds` mapping, clipping,
+- Implement source-origin offset rules, physical result sizes with `image.bounds` mapping, clipping,
   positive-size validation, dynamic per-grab regions, and per-call acquisition timeouts.
+- Test desktop regions with negative desktop bounds, preservation of legacy global coordinates, full-desktop capture,
+  and monitor/window offsets from their chosen top-left origins.
 - Exercise the public contract against small fake implementations before adding platform providers.
 
 ### Task 5: Platform capture providers and auto-selection
